@@ -1,19 +1,18 @@
 #include <iostream>
 #include "config.h"
+#include "logger.h"
 
 int main() {
-    // load_config() either reads the existing file
-    // or creates it fresh on first run
     Config cfg = load_config();
+    Logger::get().init(cfg.log_path, LogLevel::DEBUG);
 
-    std::cout << "ClipForge v0.1\n\n";
-    std::cout << "Config loaded:\n";
-    std::cout << "  DB path:     " << cfg.db_path     << "\n";
-    std::cout << "  Socket:      " << cfg.socket_path << "\n";
-    std::cout << "  PID file:    " << cfg.pid_path    << "\n";
-    std::cout << "  Log file:    " << cfg.log_path    << "\n";
-    std::cout << "  Max history: " << cfg.max_history << "\n";
-    std::cout << "  Secret TTL:  " << cfg.sensitive_timeout_seconds << "s\n";
+    std::cout << "ClipForge v0.1\n";
+
+    Log::debug("Config loaded from disk");
+    Log::info ("ClipForge started successfully");
+    Log::warn ("This is a warning");
+    Log::error("This is an error");
+    Log::info ("DB path: " + cfg.db_path);
 
     return 0;
 }
