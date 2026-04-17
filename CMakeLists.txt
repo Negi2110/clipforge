@@ -21,6 +21,14 @@ include_directories(
 # Source files
 add_executable(clipforge
     src/main.cpp
+    src/config.cpp
+    src/logger.cpp
+    src/storage.cpp
+    src/ipc.cpp
+    src/daemon.cpp
+    src/cli.cpp
+    src/tui.cpp
+    src/utils.cpp
 )
 
 # Link libraries
