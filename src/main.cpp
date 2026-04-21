@@ -5,48 +5,73 @@
 #include "logger.h"
 #include "storage.h"
 #include "ipc.h"
+#include "daemon.h"
 
-int main() {
+// helper — connects, sends one message, returns response, disconnects
+static Response send_command(const std::string& socket_path,
+                             const std::string& cmd,
+                             const std::string& payload = "") {
+    IPCClient client;
+    if (!client.connect(socket_path)) {
+        return make_response(1, "Failed to connect to daemon");
+    }
+    auto resp = client.send(make_message(cmd, payload));
+    client.disconnect();
+    return resp;
+}
+
+int main(int argc, char* argv[]) {
     Config cfg = load_config();
     Logger::get().init(cfg.log_path, LogLevel::DEBUG);
 
-    Storage storage(cfg.db_path);
-    storage.clear_history();
-    storage.save_item("https://github.com/Negi2110/clipforge", "url");
-    storage.save_item("sudo apt install cmake", "text");
+    if (argc > 1) {
+        std::string arg(argv[1]);
 
-    // start IPC server
-    IPCServer server;
-    server.start(cfg.socket_path, [&](const Message& msg) -> Response {
-        std::string cmd(msg.command);
-        if (cmd == "PING") return make_response(0, "PONG");
-        if (cmd == "LIST") {
-            auto items = storage.get_history(50);
-            return make_response(0, serialize_items(items));
+        if (arg == "daemon") {
+            if (Daemon::is_running(cfg.pid_path)) {
+                std::cout << "Daemon is already running\n";
+                return 1;
+            }
+            std::cout << "Starting daemon...\n";
+            Daemon d;
+            d.daemonize(cfg);
+            d.run(cfg);
+            return 0;
         }
-        return make_response(1, "Unknown command");
-    });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-    // test PING and LIST on separate connections
-    // each send() opens a fresh connection — matches server's one-request-per-thread model
-    {
-        IPCClient client;
-        if (client.connect(cfg.socket_path)) {
-            auto resp = client.send(make_message("PING"));
-            std::cout << "PING: " << resp.data << "\n";
+        if (arg == "stop") {
+            if (!Daemon::is_running(cfg.pid_path)) {
+                std::cout << "Daemon is not running\n";
+                return 1;
+            }
+            Daemon::stop(cfg.pid_path);
+            std::cout << "Daemon stopped\n";
+            return 0;
         }
-    }
 
-    {
-        IPCClient client;
-        if (client.connect(cfg.socket_path)) {
-            auto resp = client.send(make_message("LIST"));
-            std::cout << "LIST status: " << resp.status << "\n";
-            std::cout << "LIST data: "   << resp.data   << "\n";
+        if (arg == "status") {
+            std::cout << (Daemon::is_running(cfg.pid_path)
+                ? "Daemon is running\n"
+                : "Daemon is not running\n");
+            return 0;
         }
     }
+
+    // no args — show history
+    if (!Daemon::is_running(cfg.pid_path)) {
+        std::cout << "Daemon is not running. Start with: ./build/clipforge daemon\n";
+        return 1;
+    }
+
+   // separate connection per command — small delay between connections
+    auto ping = send_command(cfg.socket_path, "PING");
+    std::cout << "PING: " << ping.data << "\n\n";
+
+    // small delay to ensure server thread finishes before next connection
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    auto list = send_command(cfg.socket_path, "LIST", "10");
+    std::cout << "Recent clipboard items:\n" << list.data << "\n";
 
     return 0;
 }
