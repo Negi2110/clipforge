@@ -1,0 +1,15 @@
+[Unit]
+Description=ClipForge clipboard manager daemon
+Documentation=https://github.com/Negi2110/clipforge
+After=graphical-session.target
+
+[Service]
+Type=forking
+PIDFile=%h/.local/share/clipforge/clipforge.pid
+ExecStart=%h/.local/bin/clipforge daemon start
+ExecStop=%h/.local/bin/clipforge daemon stop
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

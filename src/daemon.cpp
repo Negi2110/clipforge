@@ -233,7 +233,9 @@ Response Daemon::handle_message(const Message& msg, Storage& storage) {
 void Daemon::write_pidfile(const std::string& pid_path) {
     std::ofstream f(pid_path);
     if (f.is_open()) {
-        f << getpid() << "\n";
+        // no newline — systemd requires clean integer only
+        f << getpid();
+        f.flush();
         Log::info("PID file written: " + pid_path);
     } else {
         Log::error("Failed to write PID file: " + pid_path);

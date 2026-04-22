@@ -32,7 +32,7 @@ void save_default_config(const std::string& config_path) {
     f << "# Edit these values then restart the daemon\n\n";
     f << "db_path="                    << data_dir << "/history.db\n";
     f << "socket_path="                << "/tmp/clipforge.sock\n";
-    f << "pid_path="                   << "/tmp/clipforge.pid\n";
+    f << "pid_path=" << data_dir << "/clipforge.pid\n";    
     f << "log_path="                   << data_dir << "/clipforge.log\n";
     f << "max_history="                << "1000\n";
     f << "sensitive_timeout_seconds="  << "30\n";
