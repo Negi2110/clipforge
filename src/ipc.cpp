@@ -37,6 +37,7 @@ std::string serialize_items(const std::vector<ClipItem>& items) {
            << "\"type\":\""     << item.type                         << "\","
            << "\"timestamp\":"  << static_cast<long>(item.timestamp) << ","
            << "\"pinned\":"     << (item.pinned ? "true" : "false")  << ","
+           << "\"expires_at\":"  << static_cast<long>(item.expires_at)  << ","
            << "\"content\":\""  << escaped                           << "\""
            << "}";
 

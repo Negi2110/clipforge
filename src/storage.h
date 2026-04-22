@@ -12,6 +12,8 @@ struct ClipItem {
     time_t      timestamp;
     bool        pinned;
     std::string app;         // which app triggered the copy (future use)
+    time_t      expires_at;  // 0 = never expires, >0 = unix timestamp to delete at
+
 };
 
 // represents one row from the snippets table
@@ -52,7 +54,7 @@ public:
     void                  delete_snippet(const std::string& name);
     std::vector<Snippet>  get_snippets();
     std::optional<Snippet> get_snippet(const std::string& name);
-
+    void delete_expired();   // deletes items past their expires_at timestamp
 private:
     void create_tables();   // called once in constructor to set up schema
 

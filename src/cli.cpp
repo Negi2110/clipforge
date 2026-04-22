@@ -178,14 +178,27 @@ int cmd_list(const Config& cfg, int limit) {
 
         bool is_pinned = (pinned == "true");
         std::string id_str = std::string(3 - std::min((int)id.size(), 3), ' ') + id;
+        // warn user if item is a secret about to expire
+std::string expires_str = json_get(obj, "expires_at");
+long expires_at = expires_str.empty() ? 0 : std::stol(expires_str);
+long now = static_cast<long>(std::time(nullptr));
+long remaining = expires_at - now;
 
-        std::cout << Color::gray  << "  #" << Color::reset
-                  << Color::bold  << id_str << Color::reset
-                  << Color::gray  << "  " << format_time(timestamp) << "  "
-                  << Color::reset << type_badge(type) << "  "
-                  << (is_pinned ? Color::yellow + "* " + Color::reset : "  ")
-                  << preview(content)
-                  << "\n";
+std::string expiry_warning;
+if (expires_at > 0 && remaining > 0) {
+    expiry_warning = Color::red + " [expires in " + std::to_string(remaining) + "s]" + Color::reset;
+} else if (expires_at > 0 && remaining <= 0) {
+    expiry_warning = Color::red + " [expired]" + Color::reset;
+}
+
+std::cout << Color::gray  << "  #" << Color::reset
+          << Color::bold  << id_str << Color::reset
+          << Color::gray  << "  " << format_time(timestamp) << "  "
+          << Color::reset << type_badge(type) << "  "
+          << (is_pinned ? Color::yellow + "* " + Color::reset : "  ")
+          << preview(content)
+          << expiry_warning
+          << "\n";
     }
 
     return 0;

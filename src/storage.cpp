@@ -50,7 +50,9 @@ void Storage::create_tables() {
             type      TEXT    NOT NULL DEFAULT 'text',
             timestamp INTEGER NOT NULL,
             pinned    INTEGER NOT NULL DEFAULT 0,
-            app       TEXT    NOT NULL DEFAULT ''
+            app       TEXT    NOT NULL DEFAULT '',
+            expires_at INTEGER NOT NULL DEFAULT 0
+
         );
 
         CREATE TABLE IF NOT EXISTS snippets (
@@ -85,11 +87,16 @@ int Storage::save_item(const std::string& content, const std::string& type) {
         return -1;
     }
 
-    // auto-detect type if caller passed default "text"
-    // this means daemon's watch_clipboard never needs to think about types
     std::string actual_type = (type == "text") ? detect_type(content) : type;
 
-    const char* sql = "INSERT INTO history (content, type, timestamp) VALUES (?, ?, ?)";
+    // secrets get an expiry timestamp — auto-deleted after timeout
+    time_t expires_at = 0;
+    if (actual_type == "secret") {
+        expires_at = std::time(nullptr) + 30;  // 30 seconds from now
+        Log::info("Secret detected — will expire in 30s");
+    }
+
+    const char* sql = "INSERT INTO history (content, type, timestamp, expires_at) VALUES (?, ?, ?, ?)";
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
 
@@ -98,9 +105,10 @@ int Storage::save_item(const std::string& content, const std::string& type) {
         return -1;
     }
 
-    sqlite3_bind_text(stmt, 1, content.c_str(),     -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, actual_type.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text (stmt, 1, content.c_str(),    -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text (stmt, 2, actual_type.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 3, static_cast<sqlite3_int64>(std::time(nullptr)));
+    sqlite3_bind_int64(stmt, 4, static_cast<sqlite3_int64>(expires_at));
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -114,7 +122,30 @@ int Storage::save_item(const std::string& content, const std::string& type) {
     Log::debug("Saved item id=" + std::to_string(new_id) + " type=" + actual_type);
     return new_id;
 }
+void Storage::delete_expired() {
+    // delete all items where expires_at is set and has passed
+    // expires_at = 0 means never expires — the WHERE clause skips those
+    const char* sql = R"(
+        DELETE FROM history
+        WHERE expires_at > 0
+        AND expires_at < ?
+    )";
 
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(std::time(nullptr)));
+
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc == SQLITE_DONE) {
+        // sqlite3_changes returns number of rows affected by last statement
+        int deleted = sqlite3_changes(db_);
+        if (deleted > 0) {
+            Log::info("Auto-deleted " + std::to_string(deleted) + " expired secret(s)");
+        }
+    }
+}
 bool Storage::is_duplicate(const std::string& content) {
     // only check the most recently inserted item —
     // copying the same thing twice in a row should not create two entries
@@ -191,7 +222,7 @@ void Storage::evict_old_items(int max_history) {
 
 std::vector<ClipItem> Storage::get_history(int limit) {
     const char* sql = R"(
-        SELECT id, content, type, timestamp, pinned, app
+        SELECT id, content, type, timestamp, pinned, app, expires_at
         FROM history
         ORDER BY id DESC
         LIMIT ?
@@ -202,31 +233,24 @@ std::vector<ClipItem> Storage::get_history(int limit) {
     sqlite3_bind_int(stmt, 1, limit);
 
     std::vector<ClipItem> items;
-
-    // sqlite3_step returns SQLITE_ROW while there are rows to read
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         ClipItem item;
         item.id        = sqlite3_column_int(stmt, 0);
-
-        // sqlite3_column_text returns nullptr if the column is NULL
-        // always guard against nullptr before constructing std::string
         auto content   = sqlite3_column_text(stmt, 1);
         auto type      = sqlite3_column_text(stmt, 2);
         auto app       = sqlite3_column_text(stmt, 5);
-
         item.content   = content ? reinterpret_cast<const char*>(content) : "";
         item.type      = type    ? reinterpret_cast<const char*>(type)    : "text";
         item.timestamp = static_cast<time_t>(sqlite3_column_int64(stmt, 3));
         item.pinned    = sqlite3_column_int(stmt, 4) != 0;
         item.app       = app     ? reinterpret_cast<const char*>(app)     : "";
-
+        item.expires_at = static_cast<time_t>(sqlite3_column_int64(stmt, 6));
         items.push_back(item);
     }
 
     sqlite3_finalize(stmt);
     return items;
 }
-
 std::optional<ClipItem> Storage::get_item(int id) {
     const char* sql = R"(
         SELECT id, content, type, timestamp, pinned, app

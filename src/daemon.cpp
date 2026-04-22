@@ -83,26 +83,35 @@ void Daemon::daemonize(const Config& cfg) {
 void Daemon::run(Config& cfg) {
     Storage storage(cfg.db_path);
 
-    // IPC server handles all CLI commands
     IPCServer server;
     server.start(cfg.socket_path, [&](const Message& msg) -> Response {
         return handle_message(msg, storage);
     });
 
-    // clipboard watcher runs in background thread
+    // clipboard watcher thread
     std::thread watcher([&]() {
         watch_clipboard(storage);
     });
     watcher.detach();
 
+    // sensitive data cleanup thread
+    // checks every 5 seconds and deletes expired secrets
+    std::thread cleaner([&]() {
+        while (running_) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            if (running_) {
+                storage.delete_expired();
+            }
+        }
+    });
+    cleaner.detach();
+
     Log::info("Daemon running — watching clipboard");
 
-    // main loop — sleeps until signal sets running_ = false
     while (running_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
-    // graceful shutdown
     Log::info("Daemon shutting down");
     server.stop();
     remove_pidfile(cfg.pid_path);
