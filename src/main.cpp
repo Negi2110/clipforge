@@ -7,8 +7,7 @@
 
 int main(int argc, char* argv[]) {
     Config cfg = load_config();
-    Logger::get().init(cfg.log_path, LogLevel::INFO);  // INFO not DEBUG in production
-
+    Logger::get().init(cfg.log_path, LogLevel::DEBUG);
     // no arguments — show history
     if (argc < 2) {
         return cmd_list(cfg, 20);

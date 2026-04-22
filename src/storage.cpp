@@ -2,6 +2,7 @@
 #include "logger.h"
 #include <iostream>
 #include <stdexcept>
+#include "utils.h"
 
 // --- constructor and destructor ---
 
@@ -79,18 +80,17 @@ void Storage::create_tables() {
 // --- write operations ---
 
 int Storage::save_item(const std::string& content, const std::string& type) {
-    // enforce no consecutive duplicates at storage level
-    // caller never needs to check — storage handles its own invariants
     if (is_duplicate(content)) {
         Log::debug("Skipping duplicate item");
         return -1;
     }
-    // prepared statement — SQL structure compiled once, data bound separately
-    // this prevents SQL injection and is faster for repeated calls
-    const char* sql = "INSERT INTO history (content, type, timestamp) VALUES (?, ?, ?)";
 
+    // auto-detect type if caller passed default "text"
+    // this means daemon's watch_clipboard never needs to think about types
+    std::string actual_type = (type == "text") ? detect_type(content) : type;
+
+    const char* sql = "INSERT INTO history (content, type, timestamp) VALUES (?, ?, ?)";
     sqlite3_stmt* stmt = nullptr;
-    // sqlite3_prepare_v2 compiles the SQL into bytecode
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
 
     if (rc != SQLITE_OK) {
@@ -98,23 +98,20 @@ int Storage::save_item(const std::string& content, const std::string& type) {
         return -1;
     }
 
-    // bind data to the ? placeholders — index is 1-based in SQLite
-    // SQLITE_TRANSIENT tells SQLite to copy the string — safe even after content goes out of scope
-    sqlite3_bind_text(stmt, 1, content.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, type.c_str(),    -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 1, content.c_str(),     -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, actual_type.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 3, static_cast<sqlite3_int64>(std::time(nullptr)));
 
-    rc = sqlite3_step(stmt);  // execute the statement
-    sqlite3_finalize(stmt);   // always finalize to release the statement
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
 
     if (rc != SQLITE_DONE) {
         Log::error("Failed to insert item: " + std::string(sqlite3_errmsg(db_)));
         return -1;
     }
 
-    // sqlite3_last_insert_rowid returns the id of the row we just inserted
     int new_id = static_cast<int>(sqlite3_last_insert_rowid(db_));
-    Log::debug("Saved item id=" + std::to_string(new_id) + " type=" + type);
+    Log::debug("Saved item id=" + std::to_string(new_id) + " type=" + actual_type);
     return new_id;
 }
 

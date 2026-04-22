@@ -14,30 +14,30 @@
 // --- serialization ---
 
 std::string serialize_items(const std::vector<ClipItem>& items) {
-    // hand-rolled JSON — simple enough to not need a library
-    // format: [{"id":1,"content":"...","type":"text","timestamp":123,"pinned":false}, ...]
     std::ostringstream ss;
     ss << "[";
     for (size_t i = 0; i < items.size(); i++) {
         const auto& item = items[i];
 
-        // escape backslashes and double quotes inside content
-        // without this a copied string containing " would break the JSON
+        // escape content for JSON
         std::string escaped;
         for (char c : item.content) {
-            if (c == '"')  escaped += "\\\"";
+            if      (c == '"')  escaped += "\\\"";
             else if (c == '\\') escaped += "\\\\";
             else if (c == '\n') escaped += "\\n";
             else if (c == '\r') escaped += "\\r";
+            else if (c == '\t') escaped += "\\t";
             else escaped += c;
         }
 
+        // put type and timestamp BEFORE content
+        // so json_get finds them before hitting escaped content
         ss << "{"
-           << "\"id\":"        << item.id        << ","
-           << "\"content\":\""  << escaped        << "\","
-           << "\"type\":\""     << item.type      << "\","
-           << "\"timestamp\":"  << item.timestamp << ","
-           << "\"pinned\":"     << (item.pinned ? "true" : "false")
+           << "\"id\":"         << item.id                           << ","
+           << "\"type\":\""     << item.type                         << "\","
+           << "\"timestamp\":"  << static_cast<long>(item.timestamp) << ","
+           << "\"pinned\":"     << (item.pinned ? "true" : "false")  << ","
+           << "\"content\":\""  << escaped                           << "\""
            << "}";
 
         if (i + 1 < items.size()) ss << ",";

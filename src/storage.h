@@ -34,7 +34,8 @@ public:
     Storage& operator=(const Storage&) = delete;
 
     // --- write operations ---
-    int  save_item(const std::string& content, const std::string& type = "text");
+// type is auto-detected if not provided
+    int save_item(const std::string& content, const std::string& type = "text");
     void delete_item(int id);
     void clear_history();
     void pin_item(int id, bool pinned);

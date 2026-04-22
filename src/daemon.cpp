@@ -115,20 +115,30 @@ void Daemon::watch_clipboard(Storage& storage) {
     std::string last_content;
 
     while (running_) {
-        // use xclip via XWayland — no flicker on GNOME
+        // read entire clipboard output at once — not line by line
+        // this preserves multiline content as a single item
         FILE* pipe = popen("xclip -selection clipboard -o 2>/dev/null", "r");
         if (!pipe) {
             std::this_thread::sleep_for(std::chrono::seconds(2));
             continue;
         }
 
+        // read ALL output into one string
         char buf[4096] = {0};
         std::string content;
         while (fgets(buf, sizeof(buf), pipe)) {
-            content += buf;
+            content += buf;  // accumulate all lines into one string
         }
         pclose(pipe);
 
+        // strip trailing whitespace
+        while (!content.empty() &&
+               (content.back() == '\n' || content.back() == '\r' ||
+                content.back() == ' '  || content.back() == '\t')) {
+            content.pop_back();
+        }
+
+        // only save if content changed since last poll
         if (!content.empty() && content != last_content) {
             last_content = content;
             int id = storage.save_item(content);

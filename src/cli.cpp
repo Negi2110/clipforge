@@ -9,8 +9,6 @@
 #include <ctime>
 #include <iomanip>
 
-// --- ANSI color codes ---
-// using constants so colors are easy to change or disable globally
 namespace Color {
     const std::string reset   = "\033[0m";
     const std::string bold    = "\033[1m";
@@ -23,10 +21,6 @@ namespace Color {
     const std::string gray    = "\033[90m";
 }
 
-// --- helpers ---
-
-// send one command to daemon and return response
-// each call creates fresh connection — server handles one message per connection
 static Response send_cmd(const Config& cfg,
                          const std::string& command,
                          const std::string& payload = "") {
@@ -39,7 +33,6 @@ static Response send_cmd(const Config& cfg,
     return resp;
 }
 
-// check if daemon is running and print error if not
 static bool require_daemon(const Config& cfg) {
     if (!Daemon::is_running(cfg.pid_path)) {
         std::cerr << Color::red
@@ -50,77 +43,88 @@ static bool require_daemon(const Config& cfg) {
     return true;
 }
 
-// format unix timestamp to human readable "21 Apr 14:32"
-static std::string format_time(long ts) {
-    time_t t = static_cast<time_t>(ts);
-    struct tm* tm_info = std::localtime(&t);
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%d %b %H:%M", tm_info);
-    return std::string(buf);
+static std::string format_time(const std::string& ts_str) {
+    if (ts_str.empty()) return "unknown";
+    try {
+        long ts = std::stol(ts_str);
+        time_t t = static_cast<time_t>(ts);
+        struct tm* tm_info = std::localtime(&t);
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%d %b %H:%M", tm_info);
+        return std::string(buf);
+    } catch (...) {
+        return "unknown";
+    }
 }
 
-// truncate long content for display — show first line only
 static std::string preview(const std::string& content, size_t max = 60) {
-    // find first newline — multiline content shows only first line
     auto nl = content.find('\n');
     std::string first_line = (nl != std::string::npos)
                            ? content.substr(0, nl) + " ..."
                            : content;
-
     if (first_line.size() > max) {
         return first_line.substr(0, max) + "...";
     }
     return first_line;
 }
 
-// type badge with color — [URL], [PATH], [TEXT] etc
 static std::string type_badge(const std::string& type) {
-    if (type == "url")    return Color::cyan    + "[URL] "  + Color::reset;
-    if (type == "path")   return Color::yellow  + "[PATH]"  + Color::reset;
-    if (type == "secret") return Color::red     + "[SEC] "  + Color::reset;
-    return Color::gray + "[TEXT]" + Color::reset;
+    if (type == "url")    return Color::cyan    + "[URL]  " + Color::reset;
+    if (type == "path")   return Color::yellow  + "[PATH] " + Color::reset;
+    if (type == "secret") return Color::red     + "[SEC]  " + Color::reset;
+    if (type == "code")   return Color::magenta + "[CODE] " + Color::reset;
+    return Color::gray + "[TEXT] " + Color::reset;
 }
 
-// --- simple JSON field extractor ---
-// extracts value for a given key from our hand-rolled JSON
-// not a full JSON parser — works for our specific format
-static std::string json_get(const std::string& json, const std::string& key) {
+static std::string json_get(const std::string& obj, const std::string& key) {
     std::string search = "\"" + key + "\":";
-    auto pos = json.find(search);
+    size_t pos = obj.find(search);
     if (pos == std::string::npos) return "";
-
     pos += search.size();
+    if (pos >= obj.size()) return "";
 
-    if (json[pos] == '"') {
-        // string value — find closing quote, handle escaped quotes
+    if (obj[pos] == '"') {
         pos++;
         std::string result;
-        while (pos < json.size() && json[pos] != '"') {
-            if (json[pos] == '\\' && pos + 1 < json.size()) {
-                char next = json[pos + 1];
-                if (next == '"')  { result += '"';  pos += 2; continue; }
-                if (next == '\\') { result += '\\'; pos += 2; continue; }
-                if (next == 'n')  { result += '\n'; pos += 2; continue; }
+        while (pos < obj.size()) {
+            char c = obj[pos];
+            if (c == '\\' && pos + 1 < obj.size()) {
+                char next = obj[pos+1];
+                if      (next == '"')  { result += '"';  pos += 2; }
+                else if (next == '\\') { result += '\\'; pos += 2; }
+                else if (next == 'n')  { result += '\n'; pos += 2; }
+                else if (next == 'r')  { result += '\r'; pos += 2; }
+                else if (next == 't')  { result += '\t'; pos += 2; }
+                else                   { result += next; pos += 2; }
+            } else if (c == '"') {
+                break;
+            } else {
+                result += c; pos++;
             }
-            result += json[pos++];
         }
         return result;
     } else {
-        // numeric or boolean value
-        auto end = json.find_first_of(",}", pos);
-        return json.substr(pos, end - pos);
+        auto end = obj.find_first_of(",}", pos);
+        if (end == std::string::npos) return obj.substr(pos);
+        return obj.substr(pos, end - pos);
     }
 }
 
-// parse JSON array of items — splits on top-level { } objects
 static std::vector<std::string> parse_json_array(const std::string& json) {
     std::vector<std::string> objects;
     if (json.empty() || json[0] != '[') return objects;
 
     int depth = 0;
     size_t start = 0;
+    bool in_string = false;
 
     for (size_t i = 0; i < json.size(); i++) {
+        if (in_string) {
+            if (json[i] == '\\') { i++; continue; }
+            if (json[i] == '"')  { in_string = false; }
+            continue;
+        }
+        if (json[i] == '"') { in_string = true; continue; }
         if (json[i] == '{') {
             if (depth == 0) start = i;
             depth++;
@@ -134,11 +138,9 @@ static std::vector<std::string> parse_json_array(const std::string& json) {
     return objects;
 }
 
-// copy content to clipboard via wl-copy
 static bool copy_to_clipboard(const std::string& content) {
     FILE* pipe = popen("wl-copy", "w");
     if (!pipe) {
-        // fallback to xclip for X11
         pipe = popen("xclip -selection clipboard", "w");
         if (!pipe) return false;
     }
@@ -146,8 +148,6 @@ static bool copy_to_clipboard(const std::string& content) {
     pclose(pipe);
     return true;
 }
-
-// --- CLI commands ---
 
 int cmd_list(const Config& cfg, int limit) {
     if (!require_daemon(cfg)) return 1;
@@ -171,20 +171,18 @@ int cmd_list(const Config& cfg, int limit) {
 
     for (const auto& obj : items) {
         std::string id        = json_get(obj, "id");
-        std::string content   = json_get(obj, "content");
         std::string type      = json_get(obj, "type");
         std::string timestamp = json_get(obj, "timestamp");
         std::string pinned    = json_get(obj, "pinned");
+        std::string content   = json_get(obj, "content");
 
         bool is_pinned = (pinned == "true");
-
-        // right-align id in 3 chars
         std::string id_str = std::string(3 - std::min((int)id.size(), 3), ' ') + id;
 
-        std::cout << Color::gray   << "  #" << Color::reset
-                  << Color::bold   << id_str << Color::reset
-                  << Color::gray   << "  " << format_time(std::stol(timestamp)) << "  "
-                  << Color::reset  << type_badge(type) << "  "
+        std::cout << Color::gray  << "  #" << Color::reset
+                  << Color::bold  << id_str << Color::reset
+                  << Color::gray  << "  " << format_time(timestamp) << "  "
+                  << Color::reset << type_badge(type) << "  "
                   << (is_pinned ? Color::yellow + "* " + Color::reset : "  ")
                   << preview(content)
                   << "\n";
@@ -196,7 +194,6 @@ int cmd_list(const Config& cfg, int limit) {
 int cmd_get(const Config& cfg, const std::string& id_or_name) {
     if (!require_daemon(cfg)) return 1;
 
-    // check if argument is a number (history id) or string (snippet name)
     bool is_number = !id_or_name.empty() &&
                      id_or_name.find_first_not_of("0123456789") == std::string::npos;
 
@@ -204,13 +201,11 @@ int cmd_get(const Config& cfg, const std::string& id_or_name) {
     if (is_number) {
         resp = send_cmd(cfg, "GET", id_or_name);
     } else {
-        // treat as snippet name
         resp = send_cmd(cfg, "SNIPS");
         if (resp.status != 0) {
             std::cerr << Color::red << "Error: " << resp.data << Color::reset << "\n";
             return 1;
         }
-        // find snippet by name in response
         auto snips = parse_json_array(std::string(resp.data));
         std::string content;
         for (const auto& s : snips) {
@@ -237,7 +232,6 @@ int cmd_get(const Config& cfg, const std::string& id_or_name) {
         return 1;
     }
 
-    // copy content to clipboard
     std::string content(resp.data, resp.data_len);
     if (copy_to_clipboard(content)) {
         std::cout << Color::green << "Copied item #" << id_or_name
@@ -273,15 +267,15 @@ int cmd_search(const Config& cfg, const std::string& query) {
 
     for (const auto& obj : items) {
         std::string id        = json_get(obj, "id");
-        std::string content   = json_get(obj, "content");
         std::string type      = json_get(obj, "type");
         std::string timestamp = json_get(obj, "timestamp");
+        std::string content   = json_get(obj, "content");
 
         std::string id_str = std::string(3 - std::min((int)id.size(), 3), ' ') + id;
 
         std::cout << Color::gray  << "  #" << Color::reset
                   << Color::bold  << id_str << Color::reset
-                  << Color::gray  << "  " << format_time(std::stol(timestamp)) << "  "
+                  << Color::gray  << "  " << format_time(timestamp) << "  "
                   << Color::reset << type_badge(type) << "  "
                   << preview(content) << "\n";
     }
@@ -305,7 +299,6 @@ int cmd_delete(const Config& cfg, int id) {
 int cmd_clear(const Config& cfg) {
     if (!require_daemon(cfg)) return 1;
 
-    // confirm before wiping — destructive operation
     std::cout << Color::yellow
               << "Clear all clipboard history? Pinned items will be kept. (y/N): "
               << Color::reset;
@@ -348,7 +341,6 @@ int cmd_pin(const Config& cfg, int id, bool pin) {
 int cmd_save(const Config& cfg, const std::string& name) {
     if (!require_daemon(cfg)) return 1;
 
-    // read current clipboard content
     FILE* pipe = popen("wl-paste --no-newline 2>/dev/null", "r");
     if (!pipe) {
         pipe = popen("xclip -selection clipboard -o 2>/dev/null", "r");
@@ -402,12 +394,11 @@ int cmd_snippets(const Config& cfg) {
               << Color::reset;
 
     for (const auto& obj : items) {
-        std::string id      = json_get(obj, "id");
         std::string name    = json_get(obj, "name");
         std::string content = json_get(obj, "content");
 
-        std::cout << Color::bold   << "  " << name << Color::reset
-                  << Color::gray   << "  →  " << Color::reset
+        std::cout << Color::bold << "  " << name << Color::reset
+                  << Color::gray << "  →  " << Color::reset
                   << preview(content) << "\n";
     }
 
@@ -417,7 +408,6 @@ int cmd_snippets(const Config& cfg) {
 int cmd_stats(const Config& cfg) {
     if (!require_daemon(cfg)) return 1;
 
-    // for now just show list count — full stats in step 20
     auto resp = send_cmd(cfg, "LIST", "1000");
     if (resp.status != 0) {
         std::cerr << Color::red << "Error: " << resp.data << Color::reset << "\n";
@@ -433,20 +423,21 @@ int cmd_stats(const Config& cfg) {
     std::cout << "  Total items:  " << Color::bold << items.size()
               << Color::reset << "\n";
 
-    // count by type
-    int urls = 0, paths = 0, texts = 0, secrets = 0;
+    int urls = 0, paths = 0, texts = 0, secrets = 0, codes = 0;
     for (const auto& obj : items) {
         std::string type = json_get(obj, "type");
-        if (type == "url")    urls++;
+        if      (type == "url")    urls++;
         else if (type == "path")   paths++;
         else if (type == "secret") secrets++;
+        else if (type == "code")   codes++;
         else texts++;
     }
 
-    std::cout << "  URLs:         " << Color::cyan   << urls    << Color::reset << "\n";
-    std::cout << "  Paths:        " << Color::yellow << paths   << Color::reset << "\n";
-    std::cout << "  Text:         " << Color::gray   << texts   << Color::reset << "\n";
-    std::cout << "  Secrets:      " << Color::red    << secrets << Color::reset << "\n";
+    std::cout << "  URLs:         " << Color::cyan    << urls    << Color::reset << "\n";
+    std::cout << "  Paths:        " << Color::yellow  << paths   << Color::reset << "\n";
+    std::cout << "  Code:         " << Color::magenta << codes   << Color::reset << "\n";
+    std::cout << "  Secrets:      " << Color::red     << secrets << Color::reset << "\n";
+    std::cout << "  Text:         " << Color::gray    << texts   << Color::reset << "\n";
 
     return 0;
 }
@@ -454,19 +445,19 @@ int cmd_stats(const Config& cfg) {
 void print_usage() {
     std::cout << Color::bold << "\nClipForge — clipboard manager\n\n" << Color::reset;
     std::cout << Color::bold << "Usage:\n" << Color::reset;
-    std::cout << "  clip list              " << Color::gray << "show clipboard history\n"         << Color::reset;
-    std::cout << "  clip get <id>          " << Color::gray << "copy item #id to clipboard\n"    << Color::reset;
-    std::cout << "  clip get <name>        " << Color::gray << "copy named snippet to clipboard\n"<< Color::reset;
-    std::cout << "  clip search <query>    " << Color::gray << "search history\n"                << Color::reset;
-    std::cout << "  clip delete <id>       " << Color::gray << "delete item #id\n"               << Color::reset;
-    std::cout << "  clip clear             " << Color::gray << "clear all history\n"             << Color::reset;
-    std::cout << "  clip pin <id>          " << Color::gray << "pin item (never evicted)\n"      << Color::reset;
-    std::cout << "  clip unpin <id>        " << Color::gray << "unpin item\n"                    << Color::reset;
-    std::cout << "  clip save <name>       " << Color::gray << "save clipboard as snippet\n"     << Color::reset;
-    std::cout << "  clip snippets          " << Color::gray << "list saved snippets\n"           << Color::reset;
-    std::cout << "  clip stats             " << Color::gray << "show usage statistics\n"         << Color::reset;
-    std::cout << "  clip daemon start      " << Color::gray << "start the daemon\n"              << Color::reset;
-    std::cout << "  clip daemon stop       " << Color::gray << "stop the daemon\n"               << Color::reset;
-    std::cout << "  clip daemon status     " << Color::gray << "check daemon status\n"           << Color::reset;
+    std::cout << "  clip list              " << Color::gray << "show clipboard history\n"          << Color::reset;
+    std::cout << "  clip get <id>          " << Color::gray << "copy item #id to clipboard\n"     << Color::reset;
+    std::cout << "  clip get <name>        " << Color::gray << "copy named snippet to clipboard\n" << Color::reset;
+    std::cout << "  clip search <query>    " << Color::gray << "search history\n"                 << Color::reset;
+    std::cout << "  clip delete <id>       " << Color::gray << "delete item #id\n"                << Color::reset;
+    std::cout << "  clip clear             " << Color::gray << "clear all history\n"              << Color::reset;
+    std::cout << "  clip pin <id>          " << Color::gray << "pin item (never evicted)\n"       << Color::reset;
+    std::cout << "  clip unpin <id>        " << Color::gray << "unpin item\n"                     << Color::reset;
+    std::cout << "  clip save <name>       " << Color::gray << "save clipboard as snippet\n"      << Color::reset;
+    std::cout << "  clip snippets          " << Color::gray << "list saved snippets\n"            << Color::reset;
+    std::cout << "  clip stats             " << Color::gray << "show usage statistics\n"          << Color::reset;
+    std::cout << "  clip daemon start      " << Color::gray << "start the daemon\n"               << Color::reset;
+    std::cout << "  clip daemon stop       " << Color::gray << "stop the daemon\n"                << Color::reset;
+    std::cout << "  clip daemon status     " << Color::gray << "check daemon status\n"            << Color::reset;
     std::cout << "\n";
 }
