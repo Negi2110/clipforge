@@ -6,6 +6,7 @@ echo "Installing ClipForge..."
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
+systemctl --user stop clipforge 2>/dev/null || true
 mkdir -p "$HOME/.local/bin"
 cp build/clipforge "$HOME/.local/bin/clipforge"
 chmod +x "$HOME/.local/bin/clipforge"
