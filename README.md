@@ -26,7 +26,7 @@ ClipForge solves this by persisting your entire clipboard history locally, with 
 - Zero network access — all data stays on your machine
 
 ---
-
+```
 ## Architecture
 
 Wayland/X11 clipboard
@@ -49,7 +49,7 @@ Wayland/X11 clipboard
 ┌───────────────────┐
 │   SQLite DB       │  ~/.local/share/clipforge/history.db
 └───────────────────┘
-
+```
 
 The daemon and CLI are separate processes that communicate over a Unix domain socket using fixed-size binary message structs. The daemon captures clipboard changes by polling `xclip` every 2 seconds, stores items in SQLite with content type detection, and serves CLI requests over IPC.
 
