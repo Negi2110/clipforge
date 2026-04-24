@@ -3,6 +3,17 @@
 #include <vector>
 #include <optional>
 #include <sqlite3.h>
+#include <map>
+
+struct ClipStats {
+    int   total_items;
+    int   pinned_items;
+    int   snippet_count;
+    long  db_size_bytes;
+    std::map<std::string, int> type_counts;  // type -> count
+    int   most_active_hour;                  // 0-23
+    int   most_active_hour_count;
+};
 
 // represents one row from the history table
 struct ClipItem {
@@ -55,6 +66,7 @@ public:
     std::vector<Snippet>  get_snippets();
     std::optional<Snippet> get_snippet(const std::string& name);
     void delete_expired();   // deletes items past their expires_at timestamp
+    ClipStats get_stats();
 private:
     void create_tables();   // called once in constructor to set up schema
 

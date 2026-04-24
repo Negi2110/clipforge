@@ -226,6 +226,25 @@ Response Daemon::handle_message(const Message& msg, Storage& storage) {
         running_ = false;
         return make_response(0, "Daemon stopping");
     }
+if (cmd == "STATS") {
+    auto stats = storage.get_stats();
+
+    // serialize stats as simple key=value string
+    // not JSON — simpler to parse for a single struct
+    std::ostringstream ss;
+    ss << "total="        << stats.total_items        << "\n"
+       << "pinned="       << stats.pinned_items        << "\n"
+       << "snippets="     << stats.snippet_count       << "\n"
+       << "db_bytes="     << stats.db_size_bytes       << "\n"
+       << "active_hour="  << stats.most_active_hour    << "\n"
+       << "active_count=" << stats.most_active_hour_count << "\n";
+
+    for (const auto& [type, count] : stats.type_counts) {
+        ss << "type_" << type << "=" << count << "\n";
+    }
+
+    return make_response(0, ss.str());
+}
 
     return make_response(1, "Unknown command: " + cmd);
 }

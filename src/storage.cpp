@@ -3,7 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 #include "utils.h"
-
+#include <filesystem>
 // --- constructor and destructor ---
 
 Storage::Storage(const std::string& db_path) {
@@ -78,6 +78,94 @@ void Storage::create_tables() {
 
     Log::info("Database schema ready");
 }
+
+ClipStats Storage::get_stats() {
+    ClipStats stats = {};
+
+    // --- total items ---
+    {
+        const char* sql = "SELECT COUNT(*) FROM history";
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        if (sqlite3_step(stmt) == SQLITE_ROW)
+            stats.total_items = sqlite3_column_int(stmt, 0);
+        sqlite3_finalize(stmt);
+    }
+
+    // --- pinned items ---
+    {
+        const char* sql = "SELECT COUNT(*) FROM history WHERE pinned = 1";
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        if (sqlite3_step(stmt) == SQLITE_ROW)
+            stats.pinned_items = sqlite3_column_int(stmt, 0);
+        sqlite3_finalize(stmt);
+    }
+
+    // --- snippet count ---
+    {
+        const char* sql = "SELECT COUNT(*) FROM snippets";
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        if (sqlite3_step(stmt) == SQLITE_ROW)
+            stats.snippet_count = sqlite3_column_int(stmt, 0);
+        sqlite3_finalize(stmt);
+    }
+
+    // --- count by type ---
+    {
+        const char* sql = "SELECT type, COUNT(*) FROM history GROUP BY type";
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            auto type = sqlite3_column_text(stmt, 0);
+            int  count = sqlite3_column_int(stmt, 1);
+            if (type) stats.type_counts[reinterpret_cast<const char*>(type)] = count;
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    // --- most active hour ---
+    // strftime extracts hour from unix timestamp stored as integer
+    // localtime modifier adjusts for local timezone
+    {
+        const char* sql = R"(
+            SELECT
+                CAST(strftime('%H', datetime(timestamp, 'unixepoch', 'localtime')) AS INTEGER) AS hour,
+                COUNT(*) as cnt
+            FROM history
+            GROUP BY hour
+            ORDER BY cnt DESC
+            LIMIT 1
+        )";
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            stats.most_active_hour       = sqlite3_column_int(stmt, 0);
+            stats.most_active_hour_count = sqlite3_column_int(stmt, 1);
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    // --- database file size ---
+    // std::filesystem::file_size returns bytes
+    // we get the db path from sqlite3_db_filename
+    {
+        const char* path = sqlite3_db_filename(db_, "main");
+        if (path) {
+            try {
+                stats.db_size_bytes = static_cast<long>(
+                    std::filesystem::file_size(path)
+                );
+            } catch (...) {
+                stats.db_size_bytes = 0;
+            }
+        }
+    }
+
+    return stats;
+}
+
 
 // --- write operations ---
 

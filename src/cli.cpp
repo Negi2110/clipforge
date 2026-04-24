@@ -2,7 +2,7 @@
 #include "ipc.h"
 #include "daemon.h"
 #include "logger.h"
-
+#include <map>
 #include <iostream>
 #include <sstream>
 #include <cstdio>
@@ -201,6 +201,92 @@ std::cout << Color::gray  << "  #" << Color::reset
           << "\n";
     }
 
+    return 0;
+}
+
+int cmd_stats(const Config& cfg) {
+    if (!require_daemon(cfg)) return 1;
+
+    auto resp = send_cmd(cfg, "STATS");
+    if (resp.status != 0) {
+        std::cerr << Color::red << "Error: " << resp.data << Color::reset << "\n";
+        return 1;
+    }
+
+    // parse key=value response
+    std::map<std::string, std::string> values;
+    std::istringstream ss(std::string(resp.data, resp.data_len));
+    std::string line;
+    while (std::getline(ss, line)) {
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        values[line.substr(0, eq)] = line.substr(eq + 1);
+    }
+
+    // format DB size
+    long db_bytes = values.count("db_bytes") ? std::stol(values["db_bytes"]) : 0;
+    std::string db_size;
+    if (db_bytes < 1024)
+        db_size = std::to_string(db_bytes) + " B";
+    else if (db_bytes < 1024 * 1024)
+        db_size = std::to_string(db_bytes / 1024) + " KB";
+    else
+        db_size = std::to_string(db_bytes / (1024 * 1024)) + " MB";
+
+    // format most active hour
+    int hour = values.count("active_hour") ? std::stoi(values["active_hour"]) : 0;
+    std::string hour_str = std::to_string(hour) + ":00 - "
+                         + std::to_string(hour + 1) + ":00";
+
+    // get type counts
+    int urls    = values.count("type_url")    ? std::stoi(values["type_url"])    : 0;
+    int paths   = values.count("type_path")   ? std::stoi(values["type_path"])   : 0;
+    int codes   = values.count("type_code")   ? std::stoi(values["type_code"])   : 0;
+    int secrets = values.count("type_secret") ? std::stoi(values["type_secret"]) : 0;
+    int texts   = values.count("type_text")   ? std::stoi(values["type_text"])   : 0;
+    int total   = values.count("total")       ? std::stoi(values["total"])       : 1;
+
+    // calculate percentages
+    auto pct = [&](int n) {
+        return std::to_string(total > 0 ? (n * 100 / total) : 0) + "%";
+    };
+
+    std::cout << Color::bold << Color::blue
+              << "\n  ClipForge Stats\n"
+              << "  ─────────────────────────────────────────────────────────\n"
+              << Color::reset;
+
+    std::cout << "  Total items:     " << Color::bold
+              << (values.count("total") ? values["total"] : "0")
+              << Color::reset << "\n";
+
+    std::cout << "  Pinned:          " << Color::yellow
+              << (values.count("pinned") ? values["pinned"] : "0")
+              << Color::reset << "\n";
+
+    std::cout << "  Snippets:        " << Color::cyan
+              << (values.count("snippets") ? values["snippets"] : "0")
+              << Color::reset << "\n";
+
+    std::cout << "  DB size:         " << Color::gray
+              << db_size << Color::reset << "\n";
+
+    std::cout << "  Most active:     " << Color::green
+              << hour_str << Color::reset << "\n";
+
+    std::cout << "\n";
+    std::cout << "  " << Color::cyan    << "[URL]  " << Color::reset
+              << urls    << "  " << Color::gray << pct(urls)    << Color::reset << "\n";
+    std::cout << "  " << Color::yellow  << "[PATH] " << Color::reset
+              << paths   << "  " << Color::gray << pct(paths)   << Color::reset << "\n";
+    std::cout << "  " << Color::magenta << "[CODE] " << Color::reset
+              << codes   << "  " << Color::gray << pct(codes)   << Color::reset << "\n";
+    std::cout << "  " << Color::red     << "[SEC]  " << Color::reset
+              << secrets << "  " << Color::gray << pct(secrets) << Color::reset << "\n";
+    std::cout << "  " << Color::gray    << "[TEXT] " << Color::reset
+              << texts   << "  " << Color::gray << pct(texts)   << Color::reset << "\n";
+
+    std::cout << "\n";
     return 0;
 }
 
@@ -418,42 +504,7 @@ int cmd_snippets(const Config& cfg) {
     return 0;
 }
 
-int cmd_stats(const Config& cfg) {
-    if (!require_daemon(cfg)) return 1;
 
-    auto resp = send_cmd(cfg, "LIST", "1000");
-    if (resp.status != 0) {
-        std::cerr << Color::red << "Error: " << resp.data << Color::reset << "\n";
-        return 1;
-    }
-
-    auto items = parse_json_array(std::string(resp.data));
-
-    std::cout << Color::bold << Color::blue
-              << "  ClipForge Stats\n"
-              << "  ─────────────────────────────────────────────────────────\n"
-              << Color::reset;
-    std::cout << "  Total items:  " << Color::bold << items.size()
-              << Color::reset << "\n";
-
-    int urls = 0, paths = 0, texts = 0, secrets = 0, codes = 0;
-    for (const auto& obj : items) {
-        std::string type = json_get(obj, "type");
-        if      (type == "url")    urls++;
-        else if (type == "path")   paths++;
-        else if (type == "secret") secrets++;
-        else if (type == "code")   codes++;
-        else texts++;
-    }
-
-    std::cout << "  URLs:         " << Color::cyan    << urls    << Color::reset << "\n";
-    std::cout << "  Paths:        " << Color::yellow  << paths   << Color::reset << "\n";
-    std::cout << "  Code:         " << Color::magenta << codes   << Color::reset << "\n";
-    std::cout << "  Secrets:      " << Color::red     << secrets << Color::reset << "\n";
-    std::cout << "  Text:         " << Color::gray    << texts   << Color::reset << "\n";
-
-    return 0;
-}
 
 void print_usage() {
     std::cout << Color::bold << "\nClipForge — clipboard manager\n\n" << Color::reset;
