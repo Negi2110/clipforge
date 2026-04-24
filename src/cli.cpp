@@ -523,5 +523,6 @@ void print_usage() {
     std::cout << "  clip daemon start      " << Color::gray << "start the daemon\n"               << Color::reset;
     std::cout << "  clip daemon stop       " << Color::gray << "stop the daemon\n"                << Color::reset;
     std::cout << "  clip daemon status     " << Color::gray << "check daemon status\n"            << Color::reset;
+    std::cout << "  clip ui                " << Color::gray << "launch interactive TUI\n" << Color::reset;
     std::cout << "\n";
 }

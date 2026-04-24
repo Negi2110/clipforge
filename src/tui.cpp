@@ -352,7 +352,7 @@ static void draw_statusbar(WINDOW* win, int width,
     } else {
         // show keyboard shortcuts
         mvwprintw(win, 0, 1,
-            "j/k:move  Enter:copy  d:delete  p:pin  /:search  q:quit");
+    "j/k:move  Enter:copy  d:delete  p:pin  /:search  h:help  q:quit");
 
         // show position
         if (!items.empty()) {
@@ -530,6 +530,7 @@ int run_tui(const Config& cfg) {
                 break;
 
             // ── help ────────────────────────────────────────────────────────
+            case 'h':
             case '?': {
                 werase(status_win);
                 wattron(status_win, COLOR_PAIR(CP_STATUSBAR));
@@ -559,6 +560,93 @@ int run_tui(const Config& cfg) {
                 mvwin(status_win,  term_height - 1, 0);
 
                 clearok(stdscr, TRUE);
+                break;
+            }
+
+// ── copy to clipboard ────────────────────────────────────────
+            case '\n':
+            case KEY_ENTER: {
+                if (items.empty()) break;
+                const auto& item = items[selected];
+
+                // send GET to daemon — returns raw content
+                auto resp = tui_send(cfg, "GET", std::to_string(item.id));
+                if (resp.status == 0) {
+                    // pipe content to wl-copy or xclip
+                    std::string content(resp.data, resp.data_len);
+                    FILE* pipe = popen("wl-copy 2>/dev/null || xclip -selection clipboard", "w");
+                    if (pipe) {
+                        fwrite(content.c_str(), 1, content.size(), pipe);
+                        pclose(pipe);
+                        status_message = "✓ Copied to clipboard: " + content.substr(0, 40);
+                        if (content.size() > 40) status_message += "...";
+                    } else {
+                        status_message = "✗ Failed to copy";
+                    }
+                } else {
+                    status_message = "✗ Error: " + std::string(resp.data);
+                }
+                message_timer = 4;
+                break;
+            }
+
+            // ── delete item ──────────────────────────────────────────────
+            case 'd': {
+                if (items.empty()) break;
+                int id = items[selected].id;
+
+                auto resp = tui_send(cfg, "DELETE", std::to_string(id));
+                if (resp.status == 0) {
+                    status_message = "✓ Deleted item #" + std::to_string(id);
+                    // reload items and adjust selection
+                    items = load_items(cfg, search_query);
+                    if (selected >= (int)items.size())
+                        selected = std::max(0, (int)items.size() - 1);
+                    scroll_offset = std::min(scroll_offset,
+                        std::max(0, (int)items.size() - list_height));
+                } else {
+                    status_message = "✗ Failed to delete";
+                }
+                message_timer = 4;
+                break;
+            }
+
+            // ── pin / unpin ──────────────────────────────────────────────
+            case 'p': {
+                if (items.empty()) break;
+                auto& item = items[selected];
+                bool new_pin = !item.pinned;
+
+                std::string payload = std::to_string(item.id)
+                                    + ":" + (new_pin ? "1" : "0");
+                auto resp = tui_send(cfg, "PIN", payload);
+
+                if (resp.status == 0) {
+                    item.pinned = new_pin;  // update local state immediately
+                    status_message = new_pin
+                        ? "✓ Pinned item #" + std::to_string(item.id)
+                        : "✓ Unpinned item #" + std::to_string(item.id);
+                } else {
+                    status_message = "✗ Failed to pin";
+                }
+                message_timer = 4;
+                break;
+            }
+
+            // ── yank (copy without moving) ───────────────────────────────
+            case 'y': {
+                if (items.empty()) break;
+                const auto& item = items[selected];
+                FILE* pipe = popen("wl-copy 2>/dev/null || xclip -selection clipboard", "w");
+                if (pipe) {
+                    fwrite(item.content.c_str(), 1, item.content.size(), pipe);
+                    pclose(pipe);
+                    status_message = "✓ Yanked: " + item.content.substr(0, 40);
+                    if (item.content.size() > 40) status_message += "...";
+                } else {
+                    status_message = "✗ Failed to yank";
+                }
+                message_timer = 4;
                 break;
             }
 
