@@ -4,7 +4,7 @@
 #include "logger.h"
 #include "daemon.h"
 #include "cli.h"
-
+#include "tui.h"
 int main(int argc, char* argv[]) {
     Config cfg = load_config();
     Logger::get().init(cfg.log_path, LogLevel::DEBUG);
@@ -96,7 +96,10 @@ int main(int argc, char* argv[]) {
     if (cmd == "stats") {
         return cmd_stats(cfg);
     }
-
+    
+    if (cmd == "ui") {
+        return run_tui(cfg);
+    }
     if (cmd == "help" || cmd == "--help" || cmd == "-h") {
         print_usage();
         return 0;
