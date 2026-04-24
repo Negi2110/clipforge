@@ -24,6 +24,7 @@ ClipForge solves this by persisting your entire clipboard history locally, with 
 - Pin important items so they are never evicted
 - Runs as a systemd user service — starts automatically on login
 - Zero network access — all data stays on your machine
+- Interactive ncurses TUI — `clip ui` for visual browsing
 
 ---
 ```
@@ -126,6 +127,11 @@ clip help                  # show all commands
 clip daemon start          # start background daemon
 clip daemon stop           # stop daemon
 clip daemon status         # check if running
+
+# TUI
+clip ui                    # launch interactive browser
+                           # j/k: navigate, Enter: copy
+                           # d: delete, p: pin, /: search
 ```
 
 ---
